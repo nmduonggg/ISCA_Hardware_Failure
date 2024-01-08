@@ -1,0 +1,3 @@
+Inject to epoch: 19
+Inject to step: 38
+Load weights from ISCA_AE_CKPT/epoch_18
