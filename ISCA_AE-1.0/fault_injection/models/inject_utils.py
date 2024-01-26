@@ -1068,15 +1068,19 @@ def get_replay_args(inj_type, rp, strategy, inj_layer, inputs, kernels, outputs,
 
     record(train_recorder, "Shape for target layer is {}\n".format(target.shape))
 
+    # những điểm bị thay thì mask = 0
     mask, delta = set_replay_pos(target, rp, train_recorder)
 
     if type(kernels) == list:
         golden_weights = []
         for elem in kernels:
-            wt_em = elem.values[0].numpy()
+            # print(elem)
+            # wt_em = elem.values[0].numpy()
+            wt_em = elem[0].numpy()
             golden_weights.append(wt_em)
     else:
-        golden_weights = kernels.values[0].numpy()
+        # golden_weights = kernels.values[0].numpy()
+        golden_weights = kernels[0].numpy()
 
     np_array = np.zeros(strategy.num_replicas_in_sync, dtype=bool)
     np_array[inj_replica] = True

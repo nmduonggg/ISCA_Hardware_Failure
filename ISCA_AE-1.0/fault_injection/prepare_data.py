@@ -48,6 +48,10 @@ def get_dataset(images, labels):
 
     return dataset, image_count
     '''
+    
+# TODO: Write new get_dataset(images: np.array, labels: np.array) function
+# def get_dataset(images, labels):
+#     pass
 
 def load_cifar10() :
     (train_data, train_labels), (test_data, test_labels) = cifar10.load_data()

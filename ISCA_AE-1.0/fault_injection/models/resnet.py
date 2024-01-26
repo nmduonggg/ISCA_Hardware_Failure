@@ -5,6 +5,8 @@ from models.inject_layers import *
 from models.random_layers import *
 
 class ResNetTypeI(tf.keras.Model):
+    """Customed ResNet for tracking output after each layer.
+        - contains multiple BasicBlock with output being dictionary tracking output of each layer"""
     def __init__(self, layer_params, seed, drop_out_rate):
         super(ResNetTypeI, self).__init__()
 
@@ -111,12 +113,12 @@ class ResNetTypeI(tf.keras.Model):
         layer_kernels.update(block_kernels)
         layer_outputs.update(block_outputs)
 
-        outputs['grad_start'] = x
+        outputs['grad_start'] = x   # grad_start is the last output which is the start point of gradient ? -> skip avg_pool and c
 
         x = self.avgpool(x)
         output = self.fc(x)
 
-        outputs['logits'] = output
+        outputs['logits'] = output  
 
         return outputs, layer_inputs, layer_kernels, layer_outputs
 

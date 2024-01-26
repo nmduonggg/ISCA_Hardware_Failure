@@ -1,7 +1,9 @@
 import tensorflow as tf
+import atexit
 # from local_tpu_resolver import LocalTPUClusterResolver
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1,2"  # Use GPUs with indices 1 and 2 or "0" with gpu:0
+os.environ["CUDA_VISIBLE_DEVICES"] = "1, 0"  # Use GPUs with indices 1 and 2 or "0" with gpu:0
+# os.environ["TF_GPU_ALLOCATOR"]='cuda_malloc_async'
 
 from models.resnet import resnet_18
 from models.backward_resnet import backward_resnet_18
@@ -71,20 +73,20 @@ def main():
     else:
         print("No GPUs found. Make sure TensorFlow is configured to use GPUs.")
 
-    strategy = tf.distribute.MirroredStrategy()
+    strategy = tf.distribute.MirroredStrategy() # distribute to multiple devices strategy
 
 
     rp = read_injection(args.file)
     #rp.seed = 123
 
     # get the dataset
-    train_dataset, valid_dataset, train_count, valid_count = generate_datasets(rp.seed)
+    train_dataset, valid_dataset, train_count, valid_count = generate_datasets(rp.seed) # get cifar10 dataset
 
     train_dataset = strategy.experimental_distribute_dataset(train_dataset)
     valid_dataset = strategy.experimental_distribute_dataset(valid_dataset)
 
     with strategy.scope():
-        model, back_model = get_model(rp.model, rp.seed)
+        model, back_model = get_model(rp.model, rp.seed)    # get forward_model and backward_model
 	# define loss and optimizer
         lr_schedule = tf.keras.optimizers.schedules.PolynomialDecay(
                 initial_learning_rate=rp.learning_rate,
@@ -128,7 +130,7 @@ def main():
             images, labels = inputs
             outputs, l_inputs, l_kernels, l_outputs = model(images, training=True, inject=False)
             predictions = outputs['logits']
-            return l_inputs[inj_layer], l_kernels[inj_layer], l_outputs[inj_layer]
+            return l_inputs[inj_layer], l_kernels[inj_layer], l_outputs[inj_layer]  # return true outputs
         return strategy.run(step1_fn, args=(iter_inputs,))
 
     @tf.function
@@ -138,22 +140,25 @@ def main():
                 images, labels = inputs
                 outputs, l_inputs, l_kernels, l_outputs = model(images, training=True, inject=inject, inj_args=inj_args)
                 predictions = outputs['logits']
-                grad_start = outputs['grad_start']
+                grad_start = outputs['grad_start']  # last output before avg_pool and fc
                 loss = tf.keras.losses.sparse_categorical_crossentropy(labels, predictions)
                 avg_loss = tf.nn.compute_average_loss(loss, global_batch_size=config.BATCH_SIZE)
 
-            man_grad_start, golden_gradients = tape.gradient(avg_loss, [grad_start, model.trainable_variables])
-            manual_gradients, _, _, _ = back_model(man_grad_start, l_inputs, l_kernels)
-
-            gradients = manual_gradients + golden_gradients[golden_grad_idx[rp.model]:]
-            model.optimizer.apply_gradients(list(zip(gradients, model.trainable_variables)))
+            # man_grad_start: Let's a_i the last output before (avgpool, fc) -> man_grad_start = dL/da_i
+            # golder_gradients: dL/d_(model's params)
+            man_grad_start, golden_gradients = tape.gradient(avg_loss, [grad_start, model.trainable_variables]) 
+            manual_gradients, _, _, _ = back_model(man_grad_start, l_inputs, l_kernels) # manual  injected gradient computed from grad_start 
+            
+            # manual_gradient of params after man_grad_start + gradient of last 2 layers (skipped previously)
+            gradients = manual_gradients + golden_gradients[golden_grad_idx[rp.model]:] 
+            model.optimizer.apply_gradients(list(zip(gradients, model.trainable_variables)))    # injected gradient steps
 
             train_loss.update_state(avg_loss * strategy.num_replicas_in_sync)
             train_accuracy.update_state(labels, predictions)
             epoch_loss.update_state(avg_loss * strategy.num_replicas_in_sync)
             epoch_accuracy.update_state(labels, predictions)
 
-            return avg_loss
+            return avg_loss # return injected loss ?
 
         return strategy.run(step2_fn, args=(iter_inputs, inj_flag))
 
@@ -169,7 +174,7 @@ def main():
                 avg_loss = tf.nn.compute_average_loss(loss, global_batch_size=config.BATCH_SIZE)
             man_grad_start = tape.gradient(avg_loss, grad_start)
             _, bkwd_inputs, bkwd_kernels, bkwd_outputs = back_model(man_grad_start, l_inputs, l_kernels)
-            return bkwd_inputs[inj_layer], bkwd_kernels[inj_layer], bkwd_outputs[inj_layer]
+            return bkwd_inputs[inj_layer], bkwd_kernels[inj_layer], bkwd_outputs[inj_layer] # return inp, out, kernel weight in each injected layer during backwards
 
         return strategy.run(step1_fn, args=(iter_inputs,))
 
@@ -193,7 +198,7 @@ def main():
             train_accuracy.update_state(labels, predictions)
             epoch_loss.update_state(avg_loss * strategy.num_replicas_in_sync)
             epoch_accuracy.update_state(labels, predictions)
-            return avg_loss
+            return avg_loss # same as fwrd_inj_train_step2 ??
 
         return strategy.run(step2_fn, args=(iter_inputs, inj_flag))
 
@@ -296,7 +301,9 @@ def main():
                 early_terminate = True
 
         epoch += 1
-
+        
+    # force close ThreadPool called from strategy
+    atexit.register(strategy._extended._collective_ops._pool.close) # type: ignore
 
 if __name__ == '__main__':
     main()
